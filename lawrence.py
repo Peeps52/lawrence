@@ -141,8 +141,14 @@ def execute(intent: str, utterance: str) -> str:
         for w in words:
             app = known.get(w.lower().strip(".?!"))
             if app:
-                ok, err = osa(f'tell application "{app}" to activate')
-                return f"Opening {app}." if ok else f"Could not open {app}. {err}"
+                # `open -a` rather than osascript `activate`: telling
+                # AppleScript to activate an app that is not already running
+                # fails with -609 "Connection is invalid". `open` launches it
+                # if needed, and needs no Automation permission.
+                r = subprocess.run(["/usr/bin/open", "-a", app],
+                                   capture_output=True, text=True)
+                return (f"Opening {app}." if r.returncode == 0
+                        else f"Could not open {app}. {r.stderr.strip()}")
         return "I did not catch which application."
 
     if intent == "write_note":
@@ -152,8 +158,11 @@ def execute(intent: str, utterance: str) -> str:
                 text = utterance[utterance.lower().index(cue) + len(cue):]
                 break
         safe = text.replace('"', "'")
-        ok, err = osa('tell application "Notes" to make new note at folder "Notes" '
-                      f'of account "iCloud" with properties {{body:"{safe}"}}')
+        # No folder or account specified: Notes uses the default. Hardcoding
+        # "iCloud" worked on my machine and would fail on one where the
+        # account is named differently -- and this Mac alone has three.
+        ok, err = osa(f'tell application "Notes" to make new note '
+                      f'with properties {{body:"{safe}"}}')
         return "Noted." if ok else f"The note failed. {err}"
 
     if intent == "search_web":
@@ -161,9 +170,38 @@ def execute(intent: str, utterance: str) -> str:
         ok, _ = osa(f'open location "https://duckduckgo.com/?q={urllib.parse.quote(q)}"')
         return "Searching." if ok else "The search failed."
 
+    if intent == "run_task":
+        return _run_task(utterance)
+
     if intent == "stop":
         return "Very good."
 
+    return "I am not set up to do that yet."
+
+
+# Tasks Lawrence can start. Each is long-running, so it is launched detached
+# and reports by opening its own output -- blocking the listen loop for two
+# minutes would mean missing everything said during it.
+JEV_OFFCYCLE = Path.home() / "jev-offcycle"
+
+JOB_WORDS = re.compile(
+    r"\b(role|roles|job|jobs|intern|internship|internships|off[- ]?cycle|"
+    r"vacanc|listing|listings|position|positions|shortlist|graduate|"
+    r"placement|spring\s?week)\b", re.I)
+
+
+def _run_task(utterance: str) -> str:
+    """Longer work. Only the job search exists so far; anything else says so
+    plainly rather than pretending."""
+    if JOB_WORDS.search(utterance) and (JEV_OFFCYCLE / "jev_offcycle").is_dir():
+        subprocess.Popen(
+            ["/usr/bin/python3", "-m", "jev_offcycle.crawl_cli",
+             "examples/sources.json", "--limit", "40"],
+            cwd=str(JEV_OFFCYCLE),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        return ("Searching the boards now, sir. The shortlist will open in your "
+                "browser when it is ready.")
     return "I am not set up to do that yet."
 
 
