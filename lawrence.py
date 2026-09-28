@@ -64,6 +64,14 @@ def _which(cmd: str) -> bool:
 
 # --------------------------------------------------------------------- reflex
 def key() -> str:
+    # .env beside this file, so Lawrence works as a background service with
+    # no shell to export anything in.
+    env = Path(__file__).parent / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if "=" in line and not line.strip().startswith("#"):
+                kk, vv = line.split("=", 1)
+                os.environ.setdefault(kk.strip(), vv.strip().strip("'\""))
     k = os.environ.get("OPENROUTER_API_KEY")
     if k:
         return k
