@@ -31,7 +31,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from questions import ADDRESSED_MIN, CONFIRM_ABOVE, NAME, build  # noqa: E402
+from questions import ADDRESSED_MIN, CONFIRM_ABOVE, NAME, OUTWARD_CONFIRM, build  # noqa: E402
 
 HOME = Path.home()
 MODEL = HOME / ".claude/voices/ggml-base.en.bin"
@@ -196,13 +196,24 @@ def _run_task(utterance: str) -> str:
     if JOB_WORDS.search(utterance) and (JEV_OFFCYCLE / "jev_offcycle").is_dir():
         subprocess.Popen(
             ["/usr/bin/python3", "-m", "jev_offcycle.crawl_cli",
-             "examples/sources.json", "--limit", "40"],
+             "examples/sources.json", "--limit", "200"],
             cwd=str(JEV_OFFCYCLE),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True)
         return ("Searching the boards now, sir. The shortlist will open in your "
                 "browser when it is ready.")
     return "I am not set up to do that yet."
+
+
+def supported(intent: str, utterance: str) -> bool:
+    """Can execute() actually do this? Checked BEFORE the stakes gate, so an
+    impossible request is declined plainly instead of being dignified with
+    "shall I proceed?" -- which implied a capability that does not exist."""
+    if intent in ("open_app", "write_note", "search_web", "stop"):
+        return True
+    if intent == "run_task":
+        return bool(JOB_WORDS.search(utterance)) and (JEV_OFFCYCLE / "jev_offcycle").is_dir()
+    return False
 
 
 # ----------------------------------------------------------------------- loop
@@ -223,11 +234,12 @@ def handle(utterance: str, api_key: str, dry: bool) -> None:
     n_levels = len(a["stakes"].get("legend") or {}) or 1
     stakes = stakes_lvl / (n_levels - 1) if n_levels > 1 else 0.0
     intent = a["intent"]["choice"]
+    outward = float(a.get("outward_effect", {}).get("noul", 1.0))  # missing => assume the worst
     cost = (res.get("usage") or {}).get("cost", 0.0)
 
     print(f'  "{utterance}"')
     print(f"    addressed {addressed:.2f} · complete {complete:.2f} · "
-          f"stakes {stakes:.2f} ({stakes_lvl:.1f}/{n_levels-1}) · {intent} "
+          f"stakes {stakes:.2f} ({stakes_lvl:.1f}/{n_levels-1}) · outward {outward:.2f} · {intent} "
           f"· {ms:.0f}ms · ${cost:.6f}")
 
     if addressed < ADDRESSED_MIN:
@@ -236,9 +248,15 @@ def handle(utterance: str, api_key: str, dry: bool) -> None:
     if complete < 0.5:
         print("    → incomplete; waiting for the rest")
         return
-    if stakes >= CONFIRM_ABOVE:
-        print(f"    → stakes {stakes:.2f} ≥ {CONFIRM_ABOVE}: CONFIRMATION REQUIRED")
-        say(f"That would be hard to undo. Shall I proceed, sir?")
+    if not supported(intent, utterance):
+        print(f"    → unsupported ({intent}); declined before any confirmation")
+        say("I am not set up to do that, sir.")
+        return
+    if stakes >= CONFIRM_ABOVE or outward >= OUTWARD_CONFIRM:
+        why = (f"stakes {stakes:.2f} ≥ {CONFIRM_ABOVE}" if stakes >= CONFIRM_ABOVE
+               else f"outward {outward:.2f} ≥ {OUTWARD_CONFIRM}")
+        print(f"    → {why}: CONFIRMATION REQUIRED")
+        say("That would be hard to undo. Shall I proceed, sir?")
         return
     if dry:
         print(f"    → would execute: {intent}")

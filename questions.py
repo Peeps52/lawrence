@@ -11,10 +11,14 @@ from __future__ import annotations
 NAME = "Lawrence"
 
 # Anything at or above this on `stakes` gets spoken confirmation before it
-# runs. Set low deliberately: the cost of confirming something harmless is a
-# second of your time, the cost of not confirming something destructive is
-# unbounded. Asymmetric costs deserve an asymmetric threshold.
-CONFIRM_ABOVE = 0.35
+# runs. Was 0.35, which made writing a note (0.36) ask for confirmation.
+CONFIRM_ABOVE = 0.5
+
+# A second, independent gate that does not depend on where `stakes` lands.
+# Raising CONFIRM_ABOVE must not let a send, delete or spend slip through on a
+# middling stakes score, so anything that reaches other people, deletes, or
+# spends is caught here at a deliberately low bar.
+OUTWARD_CONFIRM = 0.35
 
 # Below this on `addressed`, the utterance is discarded without acting. It is
 # never sent anywhere else and never stored.
@@ -66,6 +70,20 @@ def build(utterance: str) -> dict[str, dict]:
                 "email, posts publicly, deletes permanently, spends money, or "
                 "changes anything outside this machine.",
             ],
+        },
+        # Separate from `stakes` on purpose: one question failing low should not
+        # be the only thing between an utterance and an email going out.
+        "outward_effect": {
+            "type": "noul",
+            "instructions": (
+                "Carrying out this instruction would cause something to leave "
+                "this computer or be destroyed: sending a message or email to "
+                "another person, posting or publishing publicly, deleting or "
+                "permanently removing existing files or data, or spending or "
+                "transferring money. Creating a new private note, draft or file "
+                "on this computer does NOT count; nobody else sees it and it "
+                "can simply be deleted."
+            ),
         },
         "intent": {
             "type": "choice",
